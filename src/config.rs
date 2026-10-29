@@ -2281,6 +2281,142 @@ impl LocalConfig {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Offline license (v1)
+//
+// A license key is a single line:
+//
+//     base64_standard( ed25519_signature(64 bytes) || compact_json )
+//
+// i.e. the sodiumoxide "combined mode" signed message, the same wire format
+// as the signed custom.txt (src/common.rs read_custom_client). The JSON
+// payload is {"customer":str,"expires":"YYYY-MM-DD","edition":"pro"}.
+//
+// The key is stored as the local option `license-key` (LocalConfig) and only
+// gates routing through a rendezvous server; direct IP / LAN connections are
+// never gated.
+// ---------------------------------------------------------------------------
+
+/// Raw 32-byte ed25519 public key (standard base64) of the offline license
+/// signing key. The matching private key never enters this repository.
+pub const LICENSE_SIGNING_PUBKEY_B64: &str = "Hpo6qfQFG/CqlYeOMKJ/hYXyaBZpnOhO9ZJzf8iquW0=";
+
+/// Status of the stored offline license key, as consumed by the UI.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
+pub struct LicenseStatus {
+    /// One of "absent", "invalid", "expired", "valid".
+    pub status: String,
+    /// Customer from the signed payload (empty when unknown).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub customer: String,
+    /// Expiry date (YYYY-MM-DD) from the signed payload (empty when unknown).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub expires: String,
+}
+
+impl LicenseStatus {
+    fn new(status: &str) -> Self {
+        Self {
+            status: status.to_owned(),
+            customer: String::new(),
+            expires: String::new(),
+        }
+    }
+
+    fn with_payload(status: &str, customer: String, expires: String) -> Self {
+        Self {
+            status: status.to_owned(),
+            customer,
+            expires,
+        }
+    }
+
+    pub fn is_valid(&self) -> bool {
+        self.status == "valid"
+    }
+}
+
+lazy_static::lazy_static! {
+    /// (stored key, UTC day, verdict) of the last verification. The verdict is
+    /// reused until the key or the UTC day changes; `set_license_key` clears it.
+    static ref LICENSE_STATUS_CACHE: Mutex<Option<(String, String, LicenseStatus)>> =
+        Mutex::new(None);
+}
+
+/// Verify a license key string against `pk_b64` (raw ed25519 public key,
+/// standard base64), following read_custom_client's wire format.
+fn verify_license_key_with(pk_b64: &str, key: &str) -> LicenseStatus {
+    let key = key.trim();
+    if key.is_empty() {
+        return LicenseStatus::new("absent");
+    }
+    let invalid = LicenseStatus::new("invalid");
+    let Ok(pk) = base64::decode(pk_b64.as_bytes(), base64::Variant::Original) else {
+        return invalid;
+    };
+    if pk.len() != 32 {
+        return invalid;
+    }
+    let mut pk_raw = [0u8; 32];
+    pk_raw[..].copy_from_slice(&pk);
+    let pk = sign::PublicKey(pk_raw);
+    let Ok(data) = base64::decode(key.as_bytes(), base64::Variant::Original) else {
+        return invalid;
+    };
+    // sodiumoxide combined mode: first 64 bytes signature, remainder message.
+    let Ok(msg) = sign::verify(&data, &pk) else {
+        return invalid;
+    };
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(&msg) else {
+        return invalid;
+    };
+    let Some(customer) = v.get("customer").and_then(|x| x.as_str()) else {
+        return invalid;
+    };
+    let Some(expires) = v.get("expires").and_then(|x| x.as_str()) else {
+        return invalid;
+    };
+    let Ok(expires_date) = chrono::NaiveDate::parse_from_str(expires, "%Y-%m-%d") else {
+        return invalid;
+    };
+    let customer = customer.to_owned();
+    let expires = expires.to_owned();
+    if expires_date < chrono::Utc::now().date_naive() {
+        return LicenseStatus::with_payload("expired", customer, expires);
+    }
+    LicenseStatus::with_payload("valid", customer, expires)
+}
+
+/// Whether the stored license key parses, verifies against the embedded
+/// public key and has not expired (expires >= today, UTC). The verdict is
+/// cached per (key, UTC day), so calling this on every check is cheap.
+pub fn is_licensed() -> bool {
+    get_license_status().is_valid()
+}
+
+/// Current status of the stored license key (see `LicenseStatus`).
+pub fn get_license_status() -> LicenseStatus {
+    let key = LocalConfig::get_option(keys::OPTION_LICENSE_KEY);
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    if let Some((k, d, status)) = LICENSE_STATUS_CACHE.lock().unwrap().as_ref() {
+        if *k == key && *d == today {
+            return status.clone();
+        }
+    }
+    let status = verify_license_key_with(LICENSE_SIGNING_PUBKEY_B64, &key);
+    *LICENSE_STATUS_CACHE.lock().unwrap() = Some((key, today, status.clone()));
+    status
+}
+
+/// Store (or clear, when empty) the license key and return the new status.
+/// Re-checks immediately, ignoring any cached verdict.
+pub fn set_license_key(key: &str) -> LicenseStatus {
+    let key = key.trim();
+    LocalConfig::set_option(keys::OPTION_LICENSE_KEY.to_owned(), key.to_owned());
+    *LICENSE_STATUS_CACHE.lock().unwrap() = None;
+    get_license_status()
+}
+
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub struct DiscoveryPeer {
     #[serde(default, deserialize_with = "deserialize_string")]
@@ -2942,6 +3078,7 @@ pub mod keys {
     pub const OPTION_VERIFICATION_METHOD: &str = "verification-method";
     pub const OPTION_TEMPORARY_PASSWORD_LENGTH: &str = "temporary-password-length";
     pub const OPTION_CUSTOM_RENDEZVOUS_SERVER: &str = "custom-rendezvous-server";
+    pub const OPTION_LICENSE_KEY: &str = "license-key";
     pub const OPTION_API_SERVER: &str = "api-server";
     pub const OPTION_KEY: &str = "key";
     pub const OPTION_ALLOW_WEBSOCKET: &str = "allow-websocket";
@@ -3293,6 +3430,69 @@ mod tests {
     use super::{permanent_password::PERMANENT_PASSWORD_ENC_VERSION, *};
 
     static CONFIG_STATE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn test_license_status() {
+        let (pk, sk) = sign::gen_keypair();
+        let pk_b64 = base64::encode(pk.0, base64::Variant::Original);
+        let make_key = |customer: &str, expires: &str| {
+            let json = format!(
+                "{{\"customer\":\"{customer}\",\"expires\":\"{expires}\",\"edition\":\"pro\"}}"
+            );
+            base64::encode(&sign::sign(json.as_bytes(), &sk), base64::Variant::Original)
+        };
+        let today = chrono::Utc::now().date_naive();
+        let fmt = |d: chrono::NaiveDate| d.format("%Y-%m-%d").to_string();
+        let yesterday = fmt(today - chrono::Duration::days(1));
+        let today_s = fmt(today);
+        let tomorrow = fmt(today + chrono::Duration::days(1));
+
+        assert_eq!(verify_license_key_with(&pk_b64, "  ").status, "absent");
+        assert_eq!(verify_license_key_with(&pk_b64, "not base64!!").status, "invalid");
+        // valid signature, but bad payload shape
+        let bad_payload = base64::encode(
+            &sign::sign(b"{\"customer\":123}", &sk),
+            base64::Variant::Original,
+        );
+        assert_eq!(verify_license_key_with(&pk_b64, &bad_payload).status, "invalid");
+        let bad_date = base64::encode(
+            &sign::sign(
+                b"{\"customer\":\"acme\",\"expires\":\"2027-13-99\"}",
+                &sk,
+            ),
+            base64::Variant::Original,
+        );
+        assert_eq!(verify_license_key_with(&pk_b64, &bad_date).status, "invalid");
+
+        let expired = verify_license_key_with(&pk_b64, &make_key("acme", &yesterday));
+        assert_eq!(expired.status, "expired");
+        assert_eq!(expired.customer, "acme");
+        assert_eq!(expired.expires, yesterday);
+
+        // expires == today is still valid
+        let valid = verify_license_key_with(&pk_b64, &make_key("acme", &today_s));
+        assert!(valid.is_valid());
+        assert_eq!(valid.customer, "acme");
+        assert_eq!(valid.expires, today_s);
+        assert_eq!(
+            verify_license_key_with(&pk_b64, &make_key("acme", &tomorrow)).status,
+            "valid"
+        );
+
+        // signature made for another key
+        let (other_pk, _) = sign::gen_keypair();
+        let other_pk_b64 = base64::encode(other_pk.0, base64::Variant::Original);
+        assert_eq!(
+            verify_license_key_with(&other_pk_b64, &make_key("acme", &tomorrow)).status,
+            "invalid"
+        );
+
+        // the embedded constant must be a parseable 32-byte key
+        let embedded_pk =
+            base64::decode(LICENSE_SIGNING_PUBKEY_B64.as_bytes(), base64::Variant::Original)
+                .unwrap();
+        assert_eq!(embedded_pk.len(), 32);
+    }
 
     struct ConfigStateTestGuard {
         original_config: Config,

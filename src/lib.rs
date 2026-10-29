@@ -492,10 +492,20 @@ pub struct VersionCheckResponse {
 pub const VER_TYPE_ONDESK_CLIENT: &str = "ondesk-client";
 pub const VER_TYPE_ONDESK_SERVER: &str = "ondesk-server";
 
+/// Default software update feed of the OnDesk fork: the GitHub releases API of
+/// `k76108/OnDesk` ("get the latest release",
+/// https://docs.github.com/en/rest/releases/releases#get-the-latest-release).
+/// The response is parsed as GitHub release JSON (`tag_name` + `assets[]`).
+/// An empty value disables software update checks entirely (callers treat an
+/// empty feed URL as a no-op, which keeps provisioned custom clients silent).
+pub const DEFAULT_SOFTWARE_UPDATE_URL: &str =
+    "https://api.github.com/repos/k76108/OnDesk/releases/latest";
+
 pub fn version_check_request(typ: String) -> (VersionCheckRequest, String) {
-    // OnDesk is self-host-only: no update server is configured. An empty URL
-    // makes callers skip the update check entirely.
-    const URL: &str = "";
+    // Official OnDesk builds update from the fork's own GitHub release feed.
+    // A custom feed can be configured on the client side
+    // (`custom-update-url` hard setting / option); see `updater::get_update_feed_url`.
+    const URL: &str = DEFAULT_SOFTWARE_UPDATE_URL;
 
     use sysinfo::System;
     let system = System::new();
