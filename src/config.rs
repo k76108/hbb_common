@@ -2396,7 +2396,13 @@ pub fn is_licensed() -> bool {
 
 /// Current status of the stored license key (see `LicenseStatus`).
 pub fn get_license_status() -> LicenseStatus {
-    let key = LocalConfig::get_option(keys::OPTION_LICENSE_KEY);
+    // UI stores the key in LocalConfig; the service process (SYSTEM) has its own
+    // LocalConfig file, so it reads the machine-wide option that the UI pushed
+    // via IPC (see main_set_license_key).
+    let mut key = LocalConfig::get_option(keys::OPTION_LICENSE_KEY);
+    if key.is_empty() {
+        key = Config::get_option(keys::OPTION_LICENSE_KEY);
+    }
     let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
     if let Some((k, d, status)) = LICENSE_STATUS_CACHE.lock().unwrap().as_ref() {
         if *k == key && *d == today {
