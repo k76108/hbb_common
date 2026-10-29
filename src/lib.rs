@@ -489,11 +489,13 @@ pub struct VersionCheckResponse {
     pub url: String,
 }
 
-pub const VER_TYPE_RUSTDESK_CLIENT: &str = "rustdesk-client";
-pub const VER_TYPE_RUSTDESK_SERVER: &str = "rustdesk-server";
+pub const VER_TYPE_ONDESK_CLIENT: &str = "ondesk-client";
+pub const VER_TYPE_ONDESK_SERVER: &str = "ondesk-server";
 
 pub fn version_check_request(typ: String) -> (VersionCheckRequest, String) {
-    const URL: &str = "https://api.rustdesk.com/version/latest";
+    // OnDesk is self-host-only: no update server is configured. An empty URL
+    // makes callers skip the update check entirely.
+    const URL: &str = "";
 
     use sysinfo::System;
     let system = System::new();

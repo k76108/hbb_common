@@ -290,11 +290,8 @@ mod tests {
             ipv4_to_ipv6("1.1.1.1:8080".to_owned(), false),
             "1.1.1.1.nip.io:8080"
         );
-        assert_eq!(
-            ipv4_to_ipv6("rustdesk.com".to_owned(), false),
-            "rustdesk.com"
-        );
-        if ("rustdesk.com:80")
+        assert_eq!(ipv4_to_ipv6("example.com".to_owned(), false), "example.com");
+        if ("example.com:80")
             .to_socket_addrs()
             .unwrap()
             .next()

@@ -54,7 +54,7 @@ const SERIAL: i32 = 3;
 
 #[cfg(target_os = "macos")]
 lazy_static::lazy_static! {
-    pub static ref ORG: RwLock<String> = RwLock::new("com.carriez".to_owned());
+    pub static ref ORG: RwLock<String> = RwLock::new("com.ondesk".to_owned());
 }
 
 type Size = (i32, i32, i32, i32);
@@ -69,7 +69,7 @@ lazy_static::lazy_static! {
     static ref ONLINE: Mutex<HashMap<String, i64>> = Default::default();
     pub static ref PROD_RENDEZVOUS_SERVER: RwLock<String> = RwLock::new("".to_owned());
     pub static ref EXE_RENDEZVOUS_SERVER: RwLock<String> = Default::default();
-    pub static ref APP_NAME: RwLock<String> = RwLock::new("ONDesk".to_owned());
+    pub static ref APP_NAME: RwLock<String> = RwLock::new("OnDesk".to_owned());
     static ref KEY_PAIR: Mutex<Option<KeyPair>> = Default::default();
     static ref USER_DEFAULT_CONFIG: RwLock<(UserDefaultConfig, Instant)> = RwLock::new((UserDefaultConfig::load(), Instant::now()));
     pub static ref NEW_STORED_PEER_CONFIG: Mutex<HashSet<String>> = Default::default();
@@ -97,16 +97,17 @@ lazy_static::lazy_static! {
     pub static ref APP_HOME_DIR: RwLock<String> = Default::default();
 }
 
-pub const LINK_DOCS_HOME: &str = "https://rustdesk.com/docs/en/";
-pub const LINK_DOCS_X11_REQUIRED: &str = "https://rustdesk.com/docs/en/manual/linux/#x11-required";
+pub const LINK_DOCS_HOME: &str = "https://github.com/k76108/OnDesk#readme";
+pub const LINK_DOCS_X11_REQUIRED: &str =
+    "https://github.com/k76108/OnDesk/wiki/X11-required";
 pub const LINK_HEADLESS_LINUX_SUPPORT: &str =
-    "https://github.com/rustdesk/rustdesk/wiki/Headless-Linux-Support";
+    "https://github.com/k76108/OnDesk/wiki/Headless-Linux-Support";
 
 lazy_static::lazy_static! {
     pub static ref HELPER_URL: HashMap<&'static str, &'static str> = HashMap::from([
-        ("rustdesk docs home", LINK_DOCS_HOME),
-        ("rustdesk docs x11-required", LINK_DOCS_X11_REQUIRED),
-        ("rustdesk x11 headless", LINK_HEADLESS_LINUX_SUPPORT),
+        ("ondesk docs home", LINK_DOCS_HOME),
+        ("ondesk docs x11-required", LINK_DOCS_X11_REQUIRED),
+        ("ondesk x11 headless", LINK_HEADLESS_LINUX_SUPPORT),
         ]);
 }
 
@@ -117,8 +118,12 @@ const CHARS: &[char] = &[
     'm', 'n', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
 ];
 
-pub const RENDEZVOUS_SERVERS: &[&str] = &["rs-ny.rustdesk.com"];
-pub const RS_PUB_KEY: &str = "OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw=";
+// OnDesk is a self-host-only product: there are no built-in public rendezvous
+// servers. The server list is empty unless the user configures one (option,
+// exe-embedded config, or PROD build override).
+pub const RENDEZVOUS_SERVERS: &[&str] = &[];
+// No built-in public key; the key must come from the configured self-hosted server.
+pub const RS_PUB_KEY: &str = "";
 
 pub const RENDEZVOUS_PORT: i32 = 21116;
 pub const RELAY_PORT: i32 = 21117;
@@ -927,7 +932,7 @@ impl Config {
                 .next()
                 .unwrap_or_default();
         }
-        if !rendezvous_server.contains(':') {
+        if !rendezvous_server.is_empty() && !rendezvous_server.contains(':') {
             rendezvous_server = format!("{rendezvous_server}:{RENDEZVOUS_PORT}");
         }
         rendezvous_server
